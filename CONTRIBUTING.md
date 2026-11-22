@@ -47,3 +47,13 @@ tes otomatis — pakai pola yang sama untuk tes baru.
   baca SECURITY.md sebelum mengusulkan pola yang sama).
 - "Fitur pintar" yang memindahkan keputusan policy dari host ke bus —
   host selalu punya hak veto.
+
+## Proses rilis
+
+Armada tidak memakai semver — penomoran fase P0–Pn di
+`docs/superplan-armada-agen.md`; versi daemon di `node/wr_node.py` (`VERSION`).
+
+1. Pastikan CI hijau di `main` + `CHANGELOG.md` ter-update (bagian Unreleased).
+2. Tag rilis: `git tag -a pN -m "P<N>: <judul>"` lalu `git push origin pN`.
+3. Deploy produk: `ops/install.sh` atau salin `bus/server.py` +
+   `node/wr_node.py` ke host; rollback = file `.bak` sebelum replace.

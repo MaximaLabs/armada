@@ -6,6 +6,12 @@ bukan semver — versi daemon ada di `node/wr_node.py` (`VERSION`).
 
 ## [Unreleased]
 
+### Changed
+- **P4 selesai — bus v2 jadi produksi** (:8810): instance interim :8811
+  dihentikan; nginx `webdock` memproksi `/bus/` publik dengan
+  `location = /bus/ui → 403` (info-leak hostname) — detail `docs/deploy-p2.md`.
+- Branch protection `main`: PR wajib + CI hijau (`python ×4`, `art`, `secrets`).
+
 ### Added
 - Tes integrasi `tests/test_bus_api.py`: spawn bus nyata di subprocess,
   15 grup kontrak (auth, append-only, siklus job, dedupe, cancel,
