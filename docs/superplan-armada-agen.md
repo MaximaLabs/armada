@@ -34,7 +34,7 @@ atasnya**, bukan mengganti:
 
 | Komponen | Lokasi | Peran dalam visi |
 |---|---|---|
-| `warroom-bus` (`/home/admin/bus/server.py`, :8810 lokal, HTTPS via nginx) | webdock | **Mailbox**: SQLite append-only, topik + cursor per-agen, token per-agen, tanpa delete via API. Docstring sendiri: *"agent di mesin berbeda (Webdock, cyber1, instabox, laptop) perlu saling meninggalkan catatan tanpa SSH fan-in"* |
+| `warroom-bus` (`/home/admin/bus/server.py`, :8810 lokal, HTTPS via nginx) | webdock | **Mailbox**: SQLite append-only, topik + cursor per-agen, token per-agen, tanpa delete via API. Docstring sendiri: *"agent di mesin berbeda (Webdock, cyber1, laptop) perlu saling meninggalkan catatan tanpa SSH fan-in"* |
 | `wstunnel` SSH :443 | webdock | Akses manusia lewat port web — tembus blokir :22 |
 | `tailscaled` | webdock | Mesh VPN, NAT traversal + DERP relay |
 | `ttyd`, `novnc` | webdock | Terminal & desktop MT5 lewat browser :443 |
@@ -42,7 +42,7 @@ atasnya**, bukan mengganti:
 | Backup postgres+bus harian | webdock → `~/backups/` | Restore control plane |
 
 **Armada yang diakui hari ini**: `polywarroom` (webdock), `cyber1`, laptop
-owner, instabox (`box-2aacb3`). VM2 Azure (`mt5-trader-vm2`) **BUKAN** anggota
+owner. ~~instabox~~ **sudah dinonaktifkan** (konfirmasi owner, 22 Nov 2026). VM2 Azure (`mt5-trader-vm2`) **BUKAN** anggota
 — host live terproteksi, tidak pernah menerima job.
 
 ## 3. Arsitektur target
@@ -57,7 +57,7 @@ owner, instabox (`box-2aacb3`). VM2 Azure (`mt5-trader-vm2`) **BUKAN** anggota
    warroom-bus (mailbox; direplikasi; satu-satunya
                  permukaan publik baru = endpoint /bus/job/*)
          ▲                ▲                ▲
-   wr-node@polywr   wr-node@cyber1   wr-node@instabox
+   wr-node@polywr   wr-node@cyber1   wr-node@laptop
    poll job outbound :443 → eksekusi allowlist → POST result
    + heartbeat & health snapshot ke topik health/<host>
 ```
