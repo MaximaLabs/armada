@@ -178,7 +178,7 @@ perubahan lewat PR):
 {
   "agents": {
     "devin":    {"hosts": {"polywarroom": ["health","exec"], "cyber1": ["health"]}},
-    "hermes":   {"hosts": {"polywarroom": ["health","exec"], "instabox": ["health","exec"]}},
+    "hermes":   {"hosts": {"polywarroom": ["health","exec"], "cyber1": ["health","exec"]}},
     "memoh-*":  {"hosts": {"polywarroom": ["health"]}}
   },
   "exec_allow": {
@@ -280,7 +280,7 @@ diringkas.
 | **P0** | Dokumen ini disahkan; `bus/` diangkat ke repo (`services/bus/` atau `ops/bus/`) apa adanya agar ter-version | PR docs + PR impor kode |
 | **P1** | `wr-node` T1 di polywarroom: heartbeat + snapshot ke `health/polywarroom`; halaman/papan menampilkan status armada | unit aktif + pesan health di bus |
 | **P2** | Job semantics di server.py + policy + T2 exec allowlist di polywarroom | job nyata (`df -h`) lewat bus end-to-end |
-| **P3** | `wr-node` di host kedua (cyber1 atau instabox) → multi-host terbukti | 2 host heartbeat + job silang |
+| **P3** | `wr-node` di cyber1 → multi-host terbukti | 2 host heartbeat + job silang |
 | **P4** | T3 worker (backup-test, ingest) + memoh deploy di host khusus + bot pertama ikut armada | job panjang + audit lengkap |
 | sepanjang | Uji: unit test state machine `job` + integrasi 2 node lokal di CI repo armada (simulasi klaim/lease/failover tanpa server sungguhan) | `pytest` hijau di tiap PR |
 
@@ -288,7 +288,7 @@ diringkas.
 
 1. **Lokasi kode bus di repo** — `services/bus/` (sejajar service lain)
    atau `ops/bus/` (tool infra)? Usul: `services/bus/`.
-2. **Host kedua pertama** — cyber1 atau instabox?
+2. ~~Host kedua pertama~~ **diputuskan 22 Nov: cyber1** (instabox dinonaktifkan)
 3. **Memoh**: waitlist = cloud atau self-host? Kalau self-host: host mana
    (usul: bukan polywarroom — stack berat di samping MT5/Wine + postgres).
 4. **Laptop** masuk armada sebagai `wr-node` juga? (berguna: agen di
