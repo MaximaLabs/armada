@@ -35,7 +35,7 @@ if [ -f "$SRC_DIR/node/wr_node.py" ]; then
     cp "$SRC_DIR/node/policy.example.json" "$HOME/.config/armada/policy.json.example"
     cp "$SRC_DIR/ops/wr-node.service" "$HOME/.config/systemd/user/wr-node.service"
 else
-    BASE="https://raw.githubusercontent.com/verrysimatupang99/armada/main"
+    BASE="https://raw.githubusercontent.com/MaximaLabs/armada/main"
     curl -fsSL "$BASE/node/wr_node.py" -o "$HOME/armada/wr_node.py"
     curl -fsSL "$BASE/node/policy.example.json" -o "$HOME/.config/armada/policy.json.example"
     curl -fsSL "$BASE/ops/wr-node.service" -o "$HOME/.config/systemd/user/wr-node.service"

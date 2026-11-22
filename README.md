@@ -6,7 +6,7 @@
   <img alt="Armada: agents drop job envelopes at the bus sorter; pneumatic tubes carry them to a wr-node tower on each host" src="art/armada-flow-light.svg" width="760">
 </picture>
 
-[![ci](https://github.com/verrysimatupang99/armada/actions/workflows/ci.yml/badge.svg)](https://github.com/verrysimatupang99/armada/actions/workflows/ci.yml)
+[![ci](https://github.com/MaximaLabs/armada/actions/workflows/ci.yml/badge.svg)](https://github.com/MaximaLabs/armada/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![deps: zero](https://img.shields.io/badge/runtime_deps-zero-brightgreen.svg)](#design-rules)
 
