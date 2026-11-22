@@ -109,8 +109,23 @@ Endpoint baru:
   sekalian menulis pesan `kind='result'` ke topik `job/<id>` → audit
   otomatis mengikuti pola diskusi yang sudah ada
 - `GET  /bus/job/list?state=...` — pantau antrian
-- Reaper internal di server.py: tiap menit, `claimed` dengan
-  `lease_until < now` → `queued` (failover tanpa komponen baru)
+- `POST /bus/job/cancel` — batalkan `queued`; yang `claimed` diberi flag
+  `cancel_requested` dan daemon menghentikan child-nya di poll berikut
+- Reaper internal di server.py tiap menit:
+  `claimed` dengan `lease_until < now` → `queued` (failover);
+  `queued` yang `ts_post + ttl_sec < now` → `expired`;
+  `after_id` yang induknya `failed`/`cancelled` → `cancelled`.
+
+**Output mengalir (streaming).** Untuk job panjang, daemon tidak menunggu
+selesai: potongan stdout/stderr di-append ke topik `job/<id>` tiap ~5 dtk
+(atau saat buffer penuh), dibatasi total 256KB. `job/result` final tetap
+menyimpan exit_code + tail 64KB — papan diskusi tetap jadi satu-satunya
+log yang perlu dibaca orang.
+
+**Job terjadwal.** Tabel `schedule(id, host, mode, argv, cron, agent,
+next_due, enabled)` — server.py men-materialisasi baris jadwal jatuh tempo
+menjadi `job` biasa. Inilah cara health-check berkala, uji restore backup,
+dan sync policy berulang bekerja tanpa komponen cron terpisah per host.
 
 ### 3.3 `wr-node` (daemon per host, ~150 baris, Python stdlib saja)
 
@@ -128,9 +143,28 @@ loop:
 ```
 
 Batas beban kerja (bagian yang benar-benar bisa memberatkan host):
-`max 1 job bersamaan`, `timeout` per jenis job, output dipotong 64KB,
-`deny` pola berat/merusak di policy (`rm`, `dd`, `find /`, `docker`,
+`max 1 job bersamaan`, `timeout` per jenis job, output dipotong,
+`deny` pola berat/merusak di policy (`rm`, `dd`, `find /`,
 `systemctl restart|stop` kecuali unit allowlist, akses path terlarang).
+
+**Rahasia tidak pernah lewat bus.** Job butuh kredensial (mis. `psql`)
+tidak membawa nilai rahasia di `argv` — itu akan mendarat di audit.
+Model: job menyebut `env_profile` (mis. `"warroom_ro"`), daemon
+menyuntikkan isi file env lokal (`/etc/armada/env/<profile>.env`,
+mode 640) sebagai environment child. Rahasia tetap di host asal.
+
+**Bootstrap & pembaruan mandiri.** Install pertama lewat SSH satu kali
+(token host di `/etc/armada/node.env`, 600). Setelah itu wr-node
+memperbarui dirinya: job `kind='worker'` menarik repo armada di
+`/opt/armada` lalu `systemctl restart wr-node` — lease menjamin job
+yang sedang dipegang selamat (lease expired → job balik queued).
+Versi daemon dilaporkan di heartbeat sehingga armada campur-versi
+terlihat di papan.
+
+**Strict-match `allow`.** Mode `allow` bukan substring match: program
+harus persis di daftar, dan tiap arg dicocokkan terhadap pola per-arg
+(`journalctl -u <unit> -n <N>`). Tanpa shell → `;`, `|`, `$(...)` tidak
+pernah menjadi eksekusi.
 
 ### 3.4 Policy armada — `fleet-policy.json`
 
@@ -173,6 +207,37 @@ terlarang tidak bisa disentuh dari jalur mana pun.
 - **Bukan SSH fan-in**: itulah masalah yang sudah diselesaikan bus —
   dan SSH justru diblokir di banyak jaringan sasaran.
 
+### 3.6 Klien `armada` — pintu seragam untuk semua agen
+
+Satu CLI kecil di tiap mesin agen (`armada` — stdlib Python, bisa juga
+dipakai sebagai library): `armada health`, `armada job post --host X
+--mode sandbox --argv ...`, `armada tail <jobid>`, `armada watch`. Semua
+jenis agen (Devin exec, Hermes shell/skill, agy, DeepSeek, bot memoh via
+MCP) menjalankannya sama — tanpa perlu library per bahasa. Config:
+`~/.config/armada/agent.env` (bus URL + token, 600).
+
+### 3.7 Papan status armada — `/bus/ui`
+
+Halaman HTML minimal dilayani bus itu sendiri: tabel host (heartbeat
+terakhir, versi daemon, disk/load), antrian job (queued/claimed/failed,
+umur tertua), dan tombol baca hasil. Nol framework — satu string HTML
+seperti dashboard yang sudah ada. Ini jawaban "di mana melihat armada"
+sebelum HermitHub/dashboard lain diintegrasikan.
+
+### 3.8 GitOps untuk fabric-nya sendiri
+
+Repo `armada` adalah sumber kebenaran: `bus/`, `wr-node/`, `policy/`,
+`ops/`. Perubahan policy = PR → merge → **job `worker` di bus** yang
+menarik repo dan me-refresh `agents.json`/policy di bus + host — fabric
+mendeploy dirinya memakai dirinya (dogfooding, sekaligus uji nyata).
+
+### 3.9 Fabric metrics & audit query
+
+Bus menurunkan metrik dari tabelnya sendiri: `jobs_queued` per host,
+`oldest_queued_sec`, `claim_rate`, rasio `failed`. `/bus/health` (sudah
+ada) + `/bus/stats`. Audit = query langsung: "siapa, apa, di mana, kapan,
+hasilnya apa" — satu `SELECT` pada `job` + topik `job/<id>`.
+
 ## 4. Failover & ketahanan
 
 | Skenario | Perilaku |
@@ -198,6 +263,10 @@ diringkas.
 - **Replay** → `job.id` unik + `nonce`; hasil kedua ditolak bila state
   bukan `claimed` oleh penyerang.
 - **Agen jahat/buggy flood** → rate limit per token + `max_jobs` host.
+- **Rahasia lewat argv** → dilarang model: `env_profile` injeksi lokal;
+  audit tidak pernah menyimpan nilai rahasia.
+- **Clock skew antar host** → `lease_until`/`next_due` dihitung server
+  bus saat claim/materialisasi, bukan oleh daemon.
 - **Kill switch owner** → `/etc/warroom/fleet-deny` (pola poly-pilot):
   daemon & endpoint job berhenti total selama file ada. Hanya owner.
 
@@ -210,6 +279,7 @@ diringkas.
 | **P2** | Job semantics di server.py + policy + T2 exec allowlist di polywarroom | job nyata (`df -h`) lewat bus end-to-end |
 | **P3** | `wr-node` di host kedua (cyber1 atau instabox) → multi-host terbukti | 2 host heartbeat + job silang |
 | **P4** | T3 worker (backup-test, ingest) + memoh deploy di host khusus + bot pertama ikut armada | job panjang + audit lengkap |
+| sepanjang | Uji: unit test state machine `job` + integrasi 2 node lokal di CI repo armada (simulasi klaim/lease/failover tanpa server sungguhan) | `pytest` hijau di tiap PR |
 
 ## 7. Keputusan terbuka (owner)
 
