@@ -1,26 +1,50 @@
-# bus — mailbox asinkron lintas agen & komputer
+# bus — mailbox asinkron + job queue lintas agen & host
 
-Diimpor apa adanya dari produksi `/home/admin/bus` (polywarroom) pada
-22 Nov 2026 — versi yang sedang berjalan. Perubahan berikutnya lewat PR.
+`server.py` — satu file HTTP stdlib, bind `127.0.0.1:8810`, SQLite WAL
+append-only di `BUS_DB` (default `/var/lib/warroom-bus/bus.db`).
 
-## Isi
+## Endpoint
 
-| File | Peran |
-|---|---|
-| `server.py` | server HTTP stdlib :8810 (localhost), SQLite append-only `/var/lib/warroom-bus/bus.db`. Endpoint: `/bus/health|messages|unread|topics|agents|post` |
-| `talk` | CLI bash untuk post/read/watch — dipakai agen di semua host |
-| `_patch_tokens.py` | helper menambah token agen ke `agents.json` |
-| `backup_bus_db.py` | backup `.backup` sqlite harian (dipanggil cron) |
-| `agents.example.json` | contoh format token per-agen — file asli tidak pernah masuk repo |
+| Metode | Path | Auth | Kerja |
+|---|---|---|---|
+| GET | `/bus/health` | — | liveness `{ok, ts}` |
+| GET | `/bus/ui` | — | papan status HTML (heartbeat + 25 job) — **baca SECURITY.md sebelum mengekspos** |
+| GET | `/bus/messages?topic&since&limit&agent` | ✓ | baca pesan; `agent` memajukan cursor |
+| GET | `/bus/unread?agent` | ✓ | hitung belum-dibaca per topik |
+| GET | `/bus/topics` | ✓ | topik + jumlah + ts terakhir |
+| GET | `/bus/agents` | ✓ | agen aktif per host |
+| GET | `/bus/job/claim?host` | ✓ | klaim job `queued` tertua (priority asc); atomic, lease 5 mnt |
+| GET | `/bus/job/status?id` | ✓ | `{state, cancel_req, exit_code}` — dipoll daemon saat eksekusi |
+| GET | `/bus/job/list?state` | ✓ | 100 job terakhir |
+| POST | `/bus/post` | ✓ | `{topic, agent, host, kind, text, refs}` — identitas agent harus cocok token |
+| POST | `/bus/job/post` | ✓ | `{host, mode, argv[], dedupe, after_id, ttl_sec, timeout_sec, env_profile, priority}` |
+| POST | `/bus/job/result` | ✓ | hanya agen pengklaim (409 selainnya); menulis audit `job/<id>` |
+| POST | `/bus/job/cancel` | ✓ | `queued`→`cancelled`; `claimed`→`cancel_req` (daemon kill) |
+
+Reaper internal tiap 60 dtk: lease basi → `queued` ulang; `queued` lewat
+`ttl_sec` → `expired`; anak `after_id` dari induk gagal → `cancelled`;
+`schedule.next_due` lewat → materialisasi job `kind=sched`.
 
 ## Auth
 
-`X-Bus-Token` global dari `BUS_TOKEN` (env systemd `/etc/warroom/bus_token.env`,
-mode 640) atau token per-agen di `agents.json` (dibaca ulang tiap request →
-rotasi tanpa restart). Nilai token asli **tidak pernah** masuk repo.
+`X-Bus-Token`: token master dari env `BUS_TOKEN`, atau token per-agen di
+`BUS_TOKENS_FILE` (default `/home/admin/bus/agents.json`, format
+`{"tokens": {"<agent>": "<token>"}}` — dibaca ulang tiap request → rotasi
+tanpa restart). Token per-agen hanya boleh bertindak sebagai identitasnya;
+token master (`*`) boleh atas nama siapa pun. Lihat `agents.example.json`.
+
+## Isi direktori
+
+| File | Peran |
+|---|---|
+| `server.py` | server + schema + reaper + UI |
+| `talk` | CLI bash untuk post/read/watch |
+| `backup_bus_db.py` | backup `.backup` sqlite harian (cron) |
+| `agents.example.json` | contoh format token — file asli tidak pernah masuk repo |
 
 ## Deploy
 
-Unit: `ops/warroom-bus.service` (salinan persis dari `/etc/systemd/system/`).
-Diekspos ke publik lewat nginx `https://<host>/bus/*` → `127.0.0.1:8810` —
-klien jarak jauh cukup HTTPS :443, tidak ada port baru.
+`ops/warroom-bus.service` (systemd, `ProtectSystem=strict` + `ReadWritePaths`
+ke direktori DB). Env: `BUS_PORT`, `BUS_DB`, `BUS_TOKEN`, `BUS_TOKENS_FILE`.
+Ekspos publik lewat nginx `https://<host>/bus/*` → `127.0.0.1:8810` —
+klien jarak jauh cukup HTTPS :443.
