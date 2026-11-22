@@ -1,5 +1,7 @@
 # Superplan: Armada Agen & Daemon `wr-node`
 
+> Proyek lab **MaximaLabs** — https://maximalabs.tech
+
 > Status: **rancangan — menunggu pengesahan owner** (22 Nov 2026)
 > Penulis: Devin, berdasarkan diskusi owner + audit lapangan
 > Dokumen ini adalah *plan-of-record* untuk visi "semua agen menjangkau semua

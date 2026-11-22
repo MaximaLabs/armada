@@ -1,4 +1,6 @@
-# Armada
+# Armada — by MaximaLabs
+
+> Proyek lab [MaximaLabs](https://maximalabs.tech)
 
 Fabric agen lintas server: mailbox + daemon tipis per host (`wr-node`),
 supaya agen (Devin, Hermes, agy CLI, DeepSeek, bot memoh) bisa melihat
