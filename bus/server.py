@@ -158,6 +158,8 @@ class H(BaseHTTPRequestHandler):
 
         if u.path == "/bus/health":
             return self._send(200, {"ok": True, "ts": time.time()})
+        if u.path == "/bus/ui":
+            return self._ui()
         if not self._auth():
             return
 
@@ -249,6 +251,43 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, {"agents": [{"agent": a, "host": h, "n": n, "last_ts": ts}
                                                for a, h, n, ts in rows]})
         return self._send(404, {"error": "tidak ada"})
+
+    def _ui(self) -> None:
+        now = time.time()
+        con = db()
+        hosts = {}
+        for topic, ts in con.execute(
+                "SELECT topic, MAX(ts) FROM msg WHERE topic LIKE 'health/%' "
+                "GROUP BY topic").fetchall():
+            hosts[topic.split("/", 1)[1]] = now - ts
+        jobs = con.execute(
+            "SELECT id, host, agent, mode, state, exit_code, ts_post "
+            "FROM job ORDER BY ts_post DESC LIMIT 25").fetchall()
+        tr = "".join(
+            f"<tr class='{r[4]}'><td>{r[0][:20]}</td><td>{r[1]}</td>"
+            f"<td>{r[2]}</td><td>{r[3]}</td><td>{r[4]}</td>"
+            f"<td>{r[5] if r[5] is not None else ''}</td>"
+            f"<td>{int(now - r[6])}d lalu</td></tr>" for r in jobs)
+        th = "".join(
+            f"<tr class='{('stale' if a > 300 else 'ok')}'>"
+            f"<td>{h}</td><td>{int(a)} dtk lalu</td></tr>"
+            for h, a in sorted(hosts.items()))
+        html = f"""<!doctype html><html><head><meta charset=utf-8>
+<title>Armada — status</title><meta http-equiv=refresh content=30>
+<style>body{{font:14px/1.5 monospace;background:#0d1117;color:#c9d1d9;padding:2em}}
+table{{border-collapse:collapse;margin:1em 0}}td,th{{border:1px solid #30363d;padding:4px 10px}}
+.ok td{{color:#3fb950}}.stale td{{color:#f85149}}.done td{{color:#8b949e}}
+.queued td{{color:#d29922}}.claimed td{{color:#58a6ff}}h1{{font-size:1.3em}}</style>
+</head><body><h1>Armada — status armada</h1>
+<h2>Host (heartbeat)</h2><table><tr><th>host</th><th>terakhir</th></tr>{th or '<tr><td colspan=2>belum ada</td></tr>'}</table>
+<h2>Job terakhir</h2><table><tr><th>id</th><th>host</th><th>agen</th><th>mode</th><th>state</th><th>exit</th><th>diposting</th></tr>{tr or '<tr><td colspan=7>belum ada</td></tr>'}</table>
+<p style=color:#8b949e>refresh 30d · armada by MaximaLabs</p></body></html>"""
+        body = html.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
