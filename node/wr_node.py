@@ -141,9 +141,19 @@ def allowed(argv: list, policy: dict) -> bool:
     return False
 
 
+KILL_FILES = ("/etc/warroom/fleet-deny", "/etc/armada/deny")
+
+
+def _killed() -> bool:
+    """Kill switch owner: satu file = semua exec di host ini berhenti."""
+    return any(os.path.exists(p) for p in KILL_FILES)
+
+
 def mode_granted(job: dict, policy: dict) -> bool:
     """Agen job boleh mode ini di host ini? Policy: agents.<agent>.<host>=[modes].
     Tanpa section 'agents': mode 'allow' diizinkan (perilaku lama), lainnya ditolak."""
+    if _killed():
+        return False
     mode = job.get("mode") or "allow"
     if _denied(job.get("argv") or [], policy):
         return False

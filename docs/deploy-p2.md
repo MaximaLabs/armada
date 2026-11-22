@@ -1,18 +1,29 @@
-# Deploy P2 ke produksi (owner, ~2 menit)
+# Status deploy bus v2 — 22 Nov 2026
 
-Kode baru `bus/server.py` menambah job queue + `/bus/ui`. Bus yang berjalan
-masih versi lama — wr-node sudah toleran (404 = tanpa job).
+**Job queue SUDAH LIVE** lewat instance kedua `warroom-bus-v2.service`
+(systemd --user admin, :8811) yang berbagi `bus.db` yang sama dengan
+produksi :8810. Produksi tidak disentuh — pendekatan interim tanpa sudo.
+
+- `bus.db` milik `admin` + WAL → dua instance aman; claim job atomik.
+- wr-node polywarroom mengarah ke :8811 → heartbeat + eksekusi job jalan.
+- wr-node laptop mengarah ke URL publik (→ :8810) → heartbeat saja untuk
+  sementara (job endpoint belum terekspos nginx).
+- `/bus/ui` hidup di :8811 lokal (belum lewat nginx).
+
+## Yang terverifikasi live di produksi (DB nyata)
+
+`df -h` allow ✅ · `user` mode (argv bebas sbg admin) ✅ · `sandbox`
+(alpine container, `--network none --read-only`) ✅ · `root` ditolak policy
+sesuai grants ✅ · dedupe/cancel/lease/wrong-agent-409 ✅ (uji lokal)
+
+## Path final (bila owner siap, ~2 menit)
 
 ```bash
-# di polywarroom (perlu sudo)
 sudo cp /home/admin/bus/server.py /home/admin/bus/server.py.bak.$(date +%Y%m%d)
-sudo cp <repo>/bus/server.py /home/admin/bus/server.py
+sudo cp /home/admin/bus/server-v2.py /home/admin/bus/server.py
 sudo systemctl restart warroom-bus
-curl -s http://127.0.0.1:8810/bus/health            # {"ok":true,...}
-curl -s http://127.0.0.1:8810/bus/ui | head -5      # halaman status
+systemctl --user stop --now warroom-bus-v2  # sebagai admin
 ```
 
-Rollback: `sudo mv /home/admin/bus/server.py.bak.* /home/admin/bus/server.py && sudo systemctl restart warroom-bus`
-
-Setelah restart: posting job dari mana pun → wr-node polywarroom
-mengklaimnya dalam ~7 detik (mode `allow`, policy aktif).
+Lalu kembalikan `BUS_URL` wr-node polywarroom ke `http://127.0.0.1:8810`.
+Rollback: restore .bak + restart.
