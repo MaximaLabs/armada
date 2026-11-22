@@ -65,7 +65,7 @@ def die(msg: str, code: int = 1) -> None:
 def cmd_health() -> None:
     c, b = http("GET", "/bus/messages?topic=health&limit=1")
     c2, topics = http("GET", "/bus/topics")
-    print("bus:", "ok" if c or c2 == 200 else "unreachable")
+    print("bus:", "ok" if c == 200 or c2 == 200 else "unreachable")
     for t in (topics.get("topics") or []):
         if t["topic"].startswith("health/"):
             print(f"  {t['topic']:28} {t['n']:>5} pesan")

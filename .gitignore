@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Environment & secrets — never commit real tokens
+.env
+*.env
+!*.example.env
+agents.json
+!agents.example.json
+node.env
+agent.env
+
+# Local state
+*.db
+*.db-wal
+*.db-shm
+dist/
+build/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Art scratch
+art/*.png
