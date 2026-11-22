@@ -1,29 +1,27 @@
-# Status deploy bus v2 — 22 Nov 2026
+# Status deploy bus — 22 Nov 2026 (P4 selesai)
 
-**Job queue SUDAH LIVE** lewat instance kedua `warroom-bus-v2.service`
-(systemd --user admin, :8811) yang berbagi `bus.db` yang sama dengan
-produksi :8810. Produksi tidak disentuh — pendekatan interim tanpa sudo.
+**Bus v2 = produksi.** `warroom-bus.service` (:8810) menjalankan kode penuh:
+job queue, capability ladder, env_profile, streaming, cancel, kill switch,
+per-agent tokens. Instance interim `warroom-bus-v2` (:8811) sudah stop+disable.
+Rollback: `sudo cp /home/admin/bus/server.py.bak.20261122 server.py` + restart.
 
-- `bus.db` milik `admin` + WAL → dua instance aman; claim job atomik.
-- wr-node polywarroom mengarah ke :8811 → heartbeat + eksekusi job jalan.
-- wr-node laptop mengarah ke URL publik (→ :8810) → heartbeat saja untuk
-  sementara (job endpoint belum terekspos nginx).
-- `/bus/ui` hidup di :8811 lokal (belum lewat nginx).
+## Eksposur publik
 
-## Yang terverifikasi live di produksi (DB nyata)
+`https://polywarroom.vps.webdock.cloud/bus/` → `127.0.0.1:8810` (nginx `webdock`).
 
-`df -h` allow ✅ · `user` mode (argv bebas sbg admin) ✅ · `sandbox`
-(alpine container, `--network none --read-only`) ✅ · `root` ditolak policy
-sesuai grants ✅ · dedupe/cancel/lease/wrong-agent-409 ✅ (uji lokal)
+| Endpoint publik | Status |
+|---|---|
+| `GET /bus/health` | 200 — sengaja publik |
+| `GET /bus/ui` | **403** — unauthenticated + menampilkan hostname/status; tetap bisa dibuka lokal `curl 127.0.0.1:8810/bus/ui` |
+| sisanya | token `X-Bus-Token` wajib (per-agent dari `agents.json` / master `BUS_TOKEN`) |
 
-## Path final (bila owner siap, ~2 menit)
+## Fleet status
 
-```bash
-sudo cp /home/admin/bus/server.py /home/admin/bus/server.py.bak.$(date +%Y%m%d)
-sudo cp /home/admin/bus/server-v2.py /home/admin/bus/server.py
-sudo systemctl restart warroom-bus
-systemctl --user stop --now warroom-bus-v2  # sebagai admin
-```
+- `polywarroom` — wr-node → `http://127.0.0.1:8810`, heartbeat+job ✅
+- `laptop` — wr-node → URL publik, heartbeat+job ✅ (terverifikasi `user` mode exit 0 lewat domain)
+- `cyber1` — wr-node → URL publik, heartbeat ✅
 
-Lalu kembalikan `BUS_URL` wr-node polywarroom ke `http://127.0.0.1:8810`.
-Rollback: restore .bak + restart.
+## Terverifikasi lewat URL publik
+
+`job_post` user+allow mode → claim laptop → done. `allow` exit 126 untuk
+argv non-allowlist = policy bekerja.
