@@ -1,0 +1,10 @@
+{
+  "exec_allow": {
+    "polywarroom": ["df -h", "uptime", "free -m",
+                    "systemctl --user --no-legend list-units --state=failed",
+                    "journalctl -u * -n 200"]
+  },
+  "deny_always": ["sudo ", "rm ", "dd ", "reboot", "shutdown",
+                  "mt5-trader-vm2", "36525553", "/opt/polymarket",
+                  "/etc/poly-pilot", "tencent"]
+}

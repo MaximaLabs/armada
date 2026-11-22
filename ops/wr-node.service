@@ -1,0 +1,15 @@
+[Unit]
+Description=wr-node — daemon armada (health + job worker)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/armada/node.env
+ExecStart=/usr/bin/python3 %h/armada/wr_node.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
