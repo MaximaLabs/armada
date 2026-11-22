@@ -2,8 +2,8 @@
 
 Armada tidak pakai semver. Rilis diukur **per fase** (P0–P4, lihat
 `docs/superplan-armada-agen.md`); versi daemon hidup di `node/wr_node.py`
-(`VERSION`) dan versi bus di `bus/server.py`. Tag git tetap `v*` agar
-tooling GitHub senang, tapi isi changelog bicara fase.
+(`VERSION`) dan versi bus di `bus/server.py`. Tag git mengikuti pola `pN`
+yang sudah dipakai (lihat `git tag -l`) — bukan `v*`.
 
 ## Checklist rilis
 
@@ -17,14 +17,14 @@ tooling GitHub senang, tapi isi changelog bicara fase.
 4. **Uji lokal lengkap**: `make test` (pytest) + `make compile`
    (`python -m compileall bus node cli`) + `make art` (figure deterministik,
    `git diff --exit-code` harus kosong).
-5. **Tag + release**:
+5. **Tag + release** (pola `pN` dari CONTRIBUTING.md § Proses rilis):
 
    ```bash
-   git tag -a v0.4.0 -m "P4 — bus publik via nginx+TLS"
-   git push origin v0.4.0
-   gh release create v0.4.0 \
+   git tag -a p4 -m "P4: bus publik via nginx+TLS"
+   git push origin p4
+   gh release create p4 \
      --title "P4 — bus publik via nginx+TLS" \
-     --notes-file docs/release-notes/v0.4.0.md
+     --notes-file docs/release-notes/p4.md
    ```
 
    `docs/release-notes/` berisi ringkasan + status deploy per rilis
