@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -67,6 +68,42 @@ def db() -> sqlite3.Connection:
             topic TEXT NOT NULL,
             seq   INTEGER NOT NULL,
             PRIMARY KEY (agent, topic)
+        );
+        CREATE TABLE IF NOT EXISTS job (
+            id           TEXT PRIMARY KEY,
+            host         TEXT NOT NULL,
+            agent        TEXT NOT NULL,
+            kind         TEXT NOT NULL DEFAULT 'exec',
+            mode         TEXT NOT NULL DEFAULT 'allow',
+            argv         TEXT NOT NULL,
+            dedupe       TEXT,
+            priority     INTEGER NOT NULL DEFAULT 50,
+            after_id     TEXT,
+            ttl_sec      INTEGER NOT NULL DEFAULT 86400,
+            timeout_sec  INTEGER NOT NULL DEFAULT 300,
+            state        TEXT NOT NULL DEFAULT 'queued',
+            lease_until  REAL,
+            claim_agent  TEXT,
+            claim_host   TEXT,
+            cancel_req   INTEGER NOT NULL DEFAULT 0,
+            exit_code    INTEGER,
+            stdout       TEXT,
+            stderr       TEXT,
+            ts_post      REAL NOT NULL,
+            ts_claim     REAL,
+            ts_done      REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_job_claim ON job(host, state, priority, ts_post);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_job_dedupe ON job(dedupe) WHERE dedupe IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS schedule (
+            id         TEXT PRIMARY KEY,
+            host       TEXT NOT NULL,
+            agent      TEXT NOT NULL,
+            mode       TEXT NOT NULL DEFAULT 'allow',
+            argv       TEXT NOT NULL,
+            every_sec  INTEGER NOT NULL,
+            next_due   REAL NOT NULL,
+            enabled    INTEGER NOT NULL DEFAULT 1
         );
     """)
     return con
@@ -170,6 +207,41 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, {"topics": [{"topic": t, "n": n, "last_ts": ts}
                                                for t, n, ts in rows]})
 
+        if u.path == "/bus/job/claim":
+            host = q.get("host", "")
+            now = time.time()
+            cur = con.execute(
+                "SELECT id, argv, mode, timeout_sec FROM job "
+                "WHERE state='queued' AND (host=? OR host='*') "
+                "AND (after_id IS NULL OR after_id IN "
+                "  (SELECT id FROM job WHERE state='done')) "
+                "ORDER BY priority, ts_post LIMIT 1", (host,))
+            row = cur.fetchone()
+            if not row:
+                return self._send(200, {})
+            jid = row[0]
+            n = con.execute(
+                "UPDATE job SET state='claimed', lease_until=?, "
+                "claim_agent=?, claim_host=?, ts_claim=? "
+                "WHERE id=? AND state='queued'",
+                (now + 300, self.identity, host, now, jid)).rowcount
+            con.commit()
+            if not n:
+                return self._send(200, {})
+            return self._send(200, {"id": jid, "argv": json.loads(row[1]),
+                                    "mode": row[2], "timeout_sec": row[3]})
+
+        if u.path == "/bus/job/list":
+            st = q.get("state")
+            w = "WHERE state=?" if st else ""
+            rows = con.execute(
+                "SELECT id, host, agent, mode, state, claim_agent, exit_code, "
+                "ts_post, ts_done FROM job " + w +
+                " ORDER BY ts_post DESC LIMIT 100", (st,) if st else ()).fetchall()
+            keys = ("id","host","agent","mode","state","claim_agent",
+                    "exit_code","ts_post","ts_done")
+            return self._send(200, {"jobs": [dict(zip(keys, r)) for r in rows]})
+
         if u.path == "/bus/agents":
             rows = con.execute(
                 "SELECT agent, host, COUNT(*), MAX(ts) FROM msg GROUP BY agent, host"
@@ -179,11 +251,76 @@ class H(BaseHTTPRequestHandler):
         return self._send(404, {"error": "tidak ada"})
 
     def do_POST(self) -> None:
-        if urlparse(self.path).path != "/bus/post":
+        path = urlparse(self.path).path
+        if path not in ("/bus/post", "/bus/job/post",
+                        "/bus/job/result", "/bus/job/cancel"):
             return self._send(404, {"error": "tidak ada"})
         if not self._auth():
             return
         b = self._body()
+
+        if path == "/bus/job/post":
+            argv = b.get("argv")
+            if not isinstance(argv, list) or not argv or not all(
+                    isinstance(a, str) for a in argv):
+                return self._send(400, {"error": "argv wajib array string"})
+            jid = b.get("id") or f"{int(time.time())}-{os.urandom(4).hex()}"
+            dd = b.get("dedupe")
+            if dd:
+                old = db().execute(
+                    "SELECT id,state FROM job WHERE dedupe=?", (dd,)).fetchone()
+                if old:
+                    return self._send(200, {"id": old[0], "state": old[1],
+                                            "deduped": True})
+            con = db()
+            con.execute(
+                "INSERT INTO job(id,host,agent,kind,mode,argv,dedupe,priority,"
+                "after_id,ttl_sec,timeout_sec,state,ts_post) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,'queued',?)",
+                (jid, (b.get("host") or "")[:64], self.identity[:64],
+                 (b.get("kind") or "exec")[:24], (b.get("mode") or "allow")[:24],
+                 json.dumps(argv), dd, int(b.get("priority") or 50),
+                 b.get("after_id"), int(b.get("ttl_sec") or 86400),
+                 int(b.get("timeout_sec") or 300), time.time()))
+            con.commit()
+            return self._send(200, {"id": jid, "state": "queued"})
+
+        if path == "/bus/job/result":
+            jid = b.get("id") or ""
+            con = db()
+            row = con.execute(
+                "SELECT state, claim_agent FROM job WHERE id=?", (jid,)).fetchone()
+            if not row or row[0] != "claimed" or (
+                    self.identity != "*" and row[1] != self.identity):
+                return self._send(409, {"error": "bukan job-mu / sudah selesai"})
+            con.execute(
+                "UPDATE job SET state='done', exit_code=?, stdout=?, stderr=?, "
+                "ts_done=? WHERE id=?",
+                (b.get("exit_code"), (b.get("stdout") or "")[-65536:],
+                 (b.get("stderr") or "")[-65536:], time.time(), jid))
+            con.execute(
+                "INSERT INTO msg(ts,topic,agent,host,kind,text,refs) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (time.time(), f"job/{jid}", self.identity[:64], "",
+                 "result", json.dumps({"exit_code": b.get("exit_code"),
+                                       "stderr": (b.get("stderr") or "")[:4000]}),
+                 "[]"))
+            con.commit()
+            return self._send(200, {"ok": True})
+
+        if path == "/bus/job/cancel":
+            jid = b.get("id") or ""
+            con = db()
+            row = con.execute("SELECT state FROM job WHERE id=?", (jid,)).fetchone()
+            if not row:
+                return self._send(404, {"error": "tidak ada"})
+            if row[0] == "queued":
+                con.execute("UPDATE job SET state='cancelled' WHERE id=?", (jid,))
+            elif row[0] == "claimed":
+                con.execute("UPDATE job SET cancel_req=1 WHERE id=?", (jid,))
+            con.commit()
+            return self._send(200, {"ok": True})
+
         text = (b.get("text") or "").strip()
         if not text:
             return self._send(400, {"error": "text wajib"})
@@ -205,4 +342,36 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    def _reaper() -> None:
+        while True:
+            time.sleep(60)
+            try:
+                now = time.time()
+                con = db()
+                con.execute(
+                    "UPDATE job SET state='queued', lease_until=NULL, "
+                    "claim_agent=NULL, claim_host=NULL, ts_claim=NULL "
+                    "WHERE state='claimed' AND lease_until<?", (now,))
+                con.execute(
+                    "UPDATE job SET state='expired' WHERE state='queued' "
+                    "AND ts_post + ttl_sec < ?", (now,))
+                con.execute(
+                    "UPDATE job SET state='cancelled' WHERE after_id IN "
+                    "(SELECT id FROM job WHERE state IN ('failed','cancelled'))"
+                    " AND state='queued'")
+                due = con.execute(
+                    "SELECT id,host,agent,mode,argv,every_sec FROM schedule "
+                    "WHERE enabled=1 AND next_due<?", (now,)).fetchall()
+                for sid, shost, sagent, smode, sargv, sev in due:
+                    con.execute(
+                        "INSERT INTO job(id,host,agent,kind,mode,argv,state,ts_post) "
+                        "VALUES(?,?,?,'sched',?,?,'queued',?)",
+                        (f"{sid}-{int(now)}", shost, sagent, smode, sargv, now))
+                    con.execute("UPDATE schedule SET next_due=? WHERE id=?",
+                                (now + sev, sid))
+                con.commit()
+            except Exception:
+                pass
+
+    threading.Thread(target=_reaper, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
