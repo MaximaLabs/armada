@@ -1,10 +1,23 @@
 {
-  "exec_allow": {
-    "polywarroom": ["df -h", "uptime", "free -m",
-                    "systemctl --user --no-legend list-units --state=failed",
-                    "journalctl -u * -n 200"]
+  "agents": {
+    "wr-node-polywarroom": {"polywarroom": ["health", "allow"]},
+    "wr-node-laptop":      {"laptop": ["health", "allow", "user", "sandbox"]},
+    "devin":               {"laptop": ["health", "allow", "user", "root", "sandbox"],
+                            "polywarroom": ["health", "allow"]},
+    "hermes-cyber1":       {"cyber1": ["health", "allow"]}
   },
-  "deny_always": ["sudo ", "rm ", "dd ", "reboot", "shutdown",
+  "exec_allow": {
+    "polywarroom": ["df -h", "uptime", "free -m", "systemctl status *", "journalctl -u * -n 200"],
+    "laptop":      ["df -h", "uptime", "free -m"],
+    "cyber1":      ["df -h", "uptime", "free -m", "docker ps"]
+  },
+  "sandbox_profiles": {
+    "default": {"image": "alpine:latest", "network": "none",
+                "memory": "512m", "cpus": 1, "mounts": []},
+    "fetch":   {"image": "alpine:latest", "network": "bridge",
+                "memory": "512m", "cpus": 1, "mounts": []}
+  },
+  "deny_always": ["rm -rf", "dd ", "mkfs", "shutdown", "reboot",
                   "mt5-trader-vm2", "36525553", "/opt/polymarket",
-                  "/etc/poly-pilot", "tencent"]
+                  "/etc/poly-pilot"]
 }

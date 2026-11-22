@@ -25,6 +25,7 @@ import os
 import random
 import socket
 import subprocess
+import threading
 import sys
 import time
 import urllib.request
@@ -120,16 +121,16 @@ def snapshot() -> dict:
     }
 
 
-# ---------- job exec (mode 'allow' saja di versi ini) ----------
+# ---------- job exec — capability ladder ----------
+
+def _denied(argv: list, policy: dict) -> bool:
+    cmd = " ".join(argv)
+    return any(d in cmd for d in policy.get("deny_always", []))
+
 
 def allowed(argv: list, policy: dict) -> bool:
-    """Strict-match: program exact + tiap arg terhadap pola per-arg.
-
-    policy['exec_allow'][HOST] = ["df -h", "uptime", "git -C /path *"]
-    Pola per-token: '*' bebas, selain itu harus persis sama.
-    """
-    cmd = " ".join(argv)
-    if any(d in cmd for d in policy.get("deny_always", [])):
+    """Strict-match 'allow': program exact + tiap arg terhadap pola per-token."""
+    if _denied(argv, policy):
         return False
     for rule in policy.get("exec_allow", {}).get(HOST, []):
         rp = rule.split()
@@ -140,6 +141,53 @@ def allowed(argv: list, policy: dict) -> bool:
     return False
 
 
+def mode_granted(job: dict, policy: dict) -> bool:
+    """Agen job boleh mode ini di host ini? Policy: agents.<agent>.<host>=[modes].
+    Tanpa section 'agents': mode 'allow' diizinkan (perilaku lama), lainnya ditolak."""
+    mode = job.get("mode") or "allow"
+    if _denied(job.get("argv") or [], policy):
+        return False
+    agents = policy.get("agents")
+    if not agents:
+        return mode == "allow" and allowed(job.get("argv") or [], policy)
+    grants = (agents.get(job.get("agent") or "") or {}).get(HOST) or []
+    if "*" in grants or mode in grants:
+        if mode == "allow":
+            return allowed(job.get("argv") or [], policy)
+        return True
+    return False
+
+
+def _env_profile(name: str) -> dict:
+    """Suntik env dari file lokal — rahasia tak pernah lewat bus."""
+    for base in ("~/.config/armada/env", "/etc/armada/env"):
+        p = os.path.join(os.path.expanduser(base), f"{name}.env")
+        if os.path.exists(p):
+            out = {}
+            for line in open(p):
+                k, _, v = line.partition("=")
+                if k.strip() and not k.startswith("#"):
+                    out[k.strip()] = v.strip().strip('"')
+            return out
+    return {}
+
+
+def _docker_wrap(argv: list, job: dict, policy: dict) -> list | None:
+    """Bentuk docker run dari profil sandbox policy — job tak menyentuh flag mentah."""
+    prof = (policy.get("sandbox_profiles") or {}).get(job.get("sandbox") or "default")
+    if not prof:
+        return None
+    cmd = ["docker", "run", "--rm",
+           "--memory", prof.get("memory", "512m"),
+           "--cpus", str(prof.get("cpus", 1)),
+           "--network", prof.get("network", "none"),
+           "--read-only"]
+    for m in prof.get("mounts", []):
+        cmd += ["-v", m]
+    cmd += [prof.get("image", "alpine:latest")] + argv
+    return cmd
+
+
 def run_job(job: dict, policy: dict) -> None:
     jid = job.get("id", "?")
     argv = job.get("argv") or []
@@ -148,20 +196,67 @@ def run_job(job: dict, policy: dict) -> None:
             argv = json.loads(argv)
         except Exception:
             argv = []
+    mode = job.get("mode") or "allow"
+    timeout = int(job.get("timeout_sec") or TIMEOUT_SEC)
     res = {"id": jid, "exit_code": None, "stdout": "", "stderr": ""}
-    if not argv or not allowed(argv, policy):
-        res["exit_code"], res["stderr"] = 126, "ditolak policy"
-    else:
+    if not argv or not mode_granted(job, policy):
+        res["exit_code"], res["stderr"] = 126, f"ditolak policy (mode={mode})"
+        http("POST", "/bus/job/result", res)
+        return
+    cmd = argv
+    if mode == "root":
+        cmd = ["sudo", "-n"] + argv
+    elif mode == "sandbox":
+        cmd = _docker_wrap(argv, job, policy)
+        if not cmd:
+            res["exit_code"], res["stderr"] = 126, "sandbox profile tak dikenal"
+            http("POST", "/bus/job/result", res)
+            return
+    env = dict(os.environ)
+    if job.get("env_profile"):
+        env.update(_env_profile(job["env_profile"]))
+    # reader thread mengosongkan pipe (hindari deadlock 64KB) + buffer utk streaming
+    buf = {"out": "", "err": ""}
+    def drain(pipe, key):
         try:
-            r = subprocess.run(argv, capture_output=True, text=True,
-                               timeout=int(job.get("timeout_sec") or TIMEOUT_SEC))
-            res.update(exit_code=r.returncode,
-                       stdout=r.stdout[-MAX_OUT:],
-                       stderr=r.stderr[-MAX_OUT:])
-        except subprocess.TimeoutExpired:
-            res.update(exit_code=124, stderr=f"timeout {TIMEOUT_SEC}s")
-        except Exception as e:
-            res.update(exit_code=1, stderr=f"{type(e).__name__}: {e}")
+            for line in iter(pipe.readline, ""):
+                buf[key] += line
+        except Exception:
+            pass
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, env=env)
+        threads = [threading.Thread(target=drain, args=(p.stdout, "out"), daemon=True),
+                   threading.Thread(target=drain, args=(p.stderr, "err"), daemon=True)]
+        for t in threads:
+            t.start()
+        deadline, last_flush, last_len = time.time() + timeout, time.time(), 0
+        while p.poll() is None:
+            time.sleep(2)
+            if time.time() - last_flush > 5 and len(buf["out"]) > last_len:
+                post_note(f"job/{jid}", "out",
+                          buf["out"][last_len:last_len + 3000])
+                last_len, last_flush = len(buf["out"]), time.time()
+            c, st = http("GET", f"/bus/job/status?id={jid}", timeout=5)
+            if c == 200 and st.get("cancel_req"):
+                p.kill()
+                res.update(exit_code=143, stderr="dibatalkan")
+                break
+            if time.time() > deadline:
+                p.kill()
+                res.update(exit_code=124, stderr=f"timeout {timeout}s")
+                break
+        p.wait(timeout=10)
+        for t in threads:
+            t.join(timeout=3)
+        if res["exit_code"] is None:
+            res["exit_code"] = p.returncode
+        res["stdout"] = buf["out"][-MAX_OUT:]
+        res["stderr"] = ((res["stderr"] or "") + "\n" + buf["err"]).strip()[-MAX_OUT:]
+    except FileNotFoundError as e:
+        res.update(exit_code=127, stderr=str(e))
+    except Exception as e:
+        res.update(exit_code=1, stderr=f"{type(e).__name__}: {e}")
     http("POST", "/bus/job/result", res)
 
 

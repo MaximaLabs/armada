@@ -22,8 +22,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-DB = "/var/lib/warroom-bus/bus.db"
-PORT = 8810
+DB = os.environ.get("BUS_DB", "/var/lib/warroom-bus/bus.db")
+PORT = int(os.environ.get("BUS_PORT", "8810"))
 MAX_TEXT = 20000
 
 
@@ -106,6 +106,10 @@ def db() -> sqlite3.Connection:
             enabled    INTEGER NOT NULL DEFAULT 1
         );
     """)
+    # migrasi ringan untuk DB lama
+    cols = {r[1] for r in con.execute("PRAGMA table_info(job)")}
+    if "env_profile" not in cols:
+        con.execute("ALTER TABLE job ADD COLUMN env_profile TEXT")
     return con
 
 
@@ -213,7 +217,7 @@ class H(BaseHTTPRequestHandler):
             host = q.get("host", "")
             now = time.time()
             cur = con.execute(
-                "SELECT id, argv, mode, timeout_sec FROM job "
+                "SELECT id, argv, mode, timeout_sec, agent, env_profile FROM job "
                 "WHERE state='queued' AND (host=? OR host='*') "
                 "AND (after_id IS NULL OR after_id IN "
                 "  (SELECT id FROM job WHERE state='done')) "
@@ -231,7 +235,17 @@ class H(BaseHTTPRequestHandler):
             if not n:
                 return self._send(200, {})
             return self._send(200, {"id": jid, "argv": json.loads(row[1]),
-                                    "mode": row[2], "timeout_sec": row[3]})
+                                    "mode": row[2], "timeout_sec": row[3],
+                                    "agent": row[4], "env_profile": row[5]})
+
+        if u.path == "/bus/job/status":
+            row = con.execute(
+                "SELECT state, cancel_req, exit_code FROM job WHERE id=?",
+                (q.get("id", ""),)).fetchone()
+            if not row:
+                return self._send(404, {"error": "tidak ada"})
+            return self._send(200, {"state": row[0], "cancel_req": bool(row[1]),
+                                    "exit_code": row[2]})
 
         if u.path == "/bus/job/list":
             st = q.get("state")
@@ -314,13 +328,14 @@ table{{border-collapse:collapse;margin:1em 0}}td,th{{border:1px solid #30363d;pa
             con = db()
             con.execute(
                 "INSERT INTO job(id,host,agent,kind,mode,argv,dedupe,priority,"
-                "after_id,ttl_sec,timeout_sec,state,ts_post) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,'queued',?)",
+                "after_id,ttl_sec,timeout_sec,env_profile,state,ts_post) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'queued',?)",
                 (jid, (b.get("host") or "")[:64], self.identity[:64],
                  (b.get("kind") or "exec")[:24], (b.get("mode") or "allow")[:24],
                  json.dumps(argv), dd, int(b.get("priority") or 50),
                  b.get("after_id"), int(b.get("ttl_sec") or 86400),
-                 int(b.get("timeout_sec") or 300), time.time()))
+                 int(b.get("timeout_sec") or 300),
+                 (b.get("env_profile") or "")[:64] or None, time.time()))
             con.commit()
             return self._send(200, {"id": jid, "state": "queued"})
 
@@ -342,6 +357,7 @@ table{{border-collapse:collapse;margin:1em 0}}td,th{{border:1px solid #30363d;pa
                 "VALUES(?,?,?,?,?,?,?)",
                 (time.time(), f"job/{jid}", self.identity[:64], "",
                  "result", json.dumps({"exit_code": b.get("exit_code"),
+                                       "stdout": (b.get("stdout") or "")[-4000:],
                                        "stderr": (b.get("stderr") or "")[:4000]}),
                  "[]"))
             con.commit()
