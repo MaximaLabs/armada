@@ -2,7 +2,10 @@
 
 > Proyek lab **MaximaLabs** — https://maximalabs.tech
 
-> Status: **rancangan — menunggu pengesahan owner** (22 Nov 2026)
+> Status: **P0–P2 terimplementasi & teruji lokal** (22 Nov 2026)
+> P0 impor bus ✅ · P1 wr-node live di polywarroom ✅ (heartbeat nyata di
+> `health/polywarroom`) · P2 job queue + /bus/ui ✅ terkode & teruji lokal,
+> menunggu `sudo systemctl restart warroom-bus` di server untuk live.
 > Penulis: Devin, berdasarkan diskusi owner + audit lapangan
 > Dokumen ini adalah *plan-of-record* untuk visi "semua agen menjangkau semua
 > server, dari jaringan mana pun, dan bisa hidup di host mana pun".
