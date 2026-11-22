@@ -1,5 +1,11 @@
 # Armada — by MaximaLabs
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="art/armada-flow.svg">
+  <source media="(prefers-color-scheme: light)" srcset="art/armada-flow-light.svg">
+  <img alt="Armada: agen menitip job ke bus; tabung mengantar ke wr-node di tiap host" src="art/armada-flow-light.svg" width="760">
+</picture>
+
 > Proyek lab [MaximaLabs](https://maximalabs.tech)
 
 Fabric agen lintas server: mailbox + daemon tipis per host (`wr-node`),
