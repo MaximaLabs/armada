@@ -63,13 +63,24 @@ Prinsip kunci: **server tidak pernah mendengarkan port baru**. `wr-node`
 hanya membuat koneksi keluar ke bus — host di jaringan apa pun tetap bisa
 jadi anggota armada.
 
-### 3.1 Tiga tingkat kapabilitas `wr-node`
+### 3.1 Capability ladder — spektrum kekuasaan per agen×host
 
-| Tier | Isi | Status rollout |
+SSH penuh adalah salah satu mode, bukan musuhnya. Setiap `(agent, host)`
+mendapat *mode maksimum* di policy; setiap job menyatakan mode yang ia
+butuh — default selalu yang paling sempit yang cukup:
+
+| Mode | Semantik | Kapan dipakai |
 |---|---|---|
-| **T1 — health** | heartbeat + snapshot berkala: unit gagal, disk, load, mem, paket upgradable, uptime; diposting ke `health/<host>` | P1 |
-| **T2 — exec allowlist** | job = `{program, argv[]}` tanpa shell; hanya perintah di policy (`systemctl status`, `journalctl -u`, `df`, `git -C status`, `psql` read) | P2 |
-| **T3 — worker** | job panjang: backup-test, ingest run, sinkronisasi; stream log ke bus; grant per jenis job | P4 |
+| `health` | heartbeat + snapshot baca-saja | semua host, semua agen |
+| `sandbox` | job di dalam **container Docker baru**: image dipin, rootfs read-only, `--network none` (atau allowlist), `--memory/--cpus` dibatasi, `--rm`, mount hanya yang diizinkan. Agen bebas ngapain saja DI DALAM — host kebal. | eksperimen, kode tak terpercaya, bot memoh |
+| `allow` | argv di host, hanya perintah policy (`systemctl status`, `journalctl`, `df`, `git -C status`) | produksi, default |
+| `user` | argv bebas sebagai user daemon — setara SSH non-root | host tepercaya |
+| `root` | argv bebas sebagai root (daemon sudo-capable) — setara SSH root penuh | hanya host dev/milik penuh + grant owner |
+
+Aturan aman: **container ≠ jaminan** — akses docker daemon setara root di
+host, jadi flag `docker run` dibentuk daemon dari template policy
+(image/cpu/mem/net/mount dipin), bukan dari isi job. Dan mode `root`/`user`
+tidak pernah jadi default di host produksi; selalu opt-in per agen.
 
 ### 3.2 Semantik job di bus
 
