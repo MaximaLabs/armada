@@ -359,8 +359,14 @@ table{{border-collapse:collapse;margin:1em 0}}td,th{{border:1px solid #30363d;pa
             # memint token baru (eskalasi hak). Hanya master (identity "*").
             if self.identity != "*":
                 return self._send(403, {"error": "hanya master boleh enroll"})
-            host = (b.get("host") or "").strip()
-            name = (b.get("agent") or f"wr-node-{host}").strip()
+            host = b.get("host") or ""
+            name = b.get("agent") or f"wr-node-{host}"
+            if not isinstance(host, str) or not isinstance(name, str):
+                return self._send(400, {"error": "host/agent harus string"})
+            host, name = host.strip(), name.strip()
+            if len(name) > 64 and not b.get("agent"):
+                return self._send(400, {"error": "nama default kepanjangan "
+                                                 "— pakai --agent <nama≤64>"})
             try:
                 tok = enroll_agent(host, name)
             except ValueError as e:
@@ -368,6 +374,16 @@ table{{border-collapse:collapse;margin:1em 0}}td,th{{border:1px solid #30363d;pa
                 return self._send(code, {"error": str(e)})
             except Exception as e:
                 return self._send(500, {"error": f"enroll gagal: {e}"})
+            # baris audit: siapa mendaftarkan siapa — token tak pernah dicatat
+            con = db()
+            con.execute(
+                "INSERT INTO msg(ts,topic,agent,host,kind,text,refs) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (time.time(), "audit",
+                 "master" if self.identity == "*" else self.identity,
+                 host, "enroll",
+                 json.dumps({"agent": name, "by": self.identity}), "[]"))
+            con.commit()
             return self._send(200, {"ok": True, "agent": name,
                                     "token": tok, "host": host})
 

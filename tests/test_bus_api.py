@@ -181,6 +181,25 @@ def main() -> int:
                    body={"host": "h11"})
         assert c == 200, (c, r)
         assert os.path.exists(bus.agents)
+        # body non-string → 400, bukan koneksi putus
+        c, _ = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": 123})
+        assert c == 400, c
+        # host kepanjangan → pesan menyarankan --agent
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h" * 60})
+        assert c == 400 and "agent" in (r.get("error") or ""), (c, r)
+        # enroll sukses menulis baris audit (tanpa token di dalamnya)
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h20"})
+        assert c == 200, (c, r)
+        tok20 = r["token"]
+        c, r = req("GET", bus.port, "/bus/messages?topic=audit&limit=5",
+                   token="tok-master")
+        audit = [m for m in r["messages"] if m["kind"] == "enroll"]
+        assert audit and "h20" in audit[-1]["text"] \
+            and tok20 not in audit[-1]["text"], audit
+
         # registry korup → 500 dan file TIDAK ditimpa (fleet tak dihanguskan)
         with open(bus.agents, "w") as f:
             f.write("{bukan json")

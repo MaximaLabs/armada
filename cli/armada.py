@@ -142,9 +142,15 @@ def cmd_enroll(argv: list) -> None:
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a == "--host": host = argv[i + 1]; i += 2
-        elif a == "--agent": agent = argv[i + 1]; i += 2
-        elif a == "--wait": wait = int(argv[i + 1]); i += 2
+        if a in ("--host", "--agent", "--wait"):
+            if i + 1 >= len(argv):
+                die(f"{a} butuh nilai")
+            if a == "--host": host = argv[i + 1]
+            elif a == "--agent": agent = argv[i + 1]
+            else:
+                try: wait = int(argv[i + 1])
+                except ValueError: die("--wait harus angka (detik)")
+            i += 2
         else: i += 1
     if not host:
         die("butuh --host <nama>")
