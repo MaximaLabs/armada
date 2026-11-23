@@ -148,6 +148,9 @@ def cmd_enroll(argv: list) -> None:
         else: i += 1
     if not host:
         die("butuh --host <nama>")
+    if agent and agent != f"wr-node-{host}":
+        die(f"--agent '{agent}' tak cocok: wr-node selalu post sebagai "
+            f"'wr-node-{host}' — nama lain membuat node tak bisa heartbeat")
     body = {"host": host}
     if agent:
         body["agent"] = agent
