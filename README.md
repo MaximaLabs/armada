@@ -41,8 +41,12 @@ outbound-only daemon per host**. Hosts poll out over :443; nothing listens in.
 # 1. The bus — one host, bound to localhost, front it with HTTPS
 BUS_DB=/var/lib/warroom-bus/bus.db BUS_TOKEN=<master> python3 bus/server.py
 
-# 2. A node on each host — one line, user-level systemd, no root needed
-bash ops/install.sh --bus https://bus.example.com --token <node-token> --host db1
+# 2. Enroll a host — from anywhere (master token only); prints a one-liner
+armada enroll --host db1
+#    → paste the printed curl|bash line on the host — any channel works
+#      (provider web console, cloud shell, ssh). The node then polls out
+#      over :443; nothing ever listens in. No SSH fan-in, no agents.json
+#      to edit by hand.
 
 # 3. Any agent, from anywhere — same CLI, same protocol
 armada post --host db1 --mode allow -- df -h     # → job id

@@ -2,7 +2,8 @@
 """armada — klien CLI seragam untuk semua agen.
 
 Stdlib Python, satu file. Konfigurasi ~/.config/armada/agent.env:
-    BUS_URL=https://<host>/bus   (atau http://127.0.0.1:8810 lokal)
+    BUS_URL=https://<host>       (origin saja — path /bus ditambah CLI;
+                                  http://127.0.0.1:8810 untuk lokal)
     BUS_TOKEN=<token agen>
     ARMADA_AGENT=<nama agen>     (opsional; dari token juga terbaca)
 

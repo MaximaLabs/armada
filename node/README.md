@@ -5,6 +5,17 @@ Keluar-only ke `BUS_URL` — host tidak pernah membuka port.
 
 ## Install per host
 
+Token node dibuat di sisi bus lewat `armada enroll` (master saja) — bukan
+dengan menyunting `agents.json` manual. Dari laptop:
+
+```bash
+armada enroll --host <nama> [--wait 120]
+# → mencetak satu baris bootstrap; tempel di host lewat channel apa pun
+#   (console provider/TAT, web shell, ssh). Tanpa SSH fan-in.
+```
+
+Baris yang dicetak adalah ini — atau jalankan manual dari checkout:
+
 ```bash
 bash ops/install.sh --bus https://bus.example.com --token <token> --host <nama>
 ```
