@@ -181,6 +181,13 @@ def main() -> int:
                    body={"host": "h11"})
         assert c == 200, (c, r)
         assert os.path.exists(bus.agents)
+        # registry korup → 500 dan file TIDAK ditimpa (fleet tak dihanguskan)
+        with open(bus.agents, "w") as f:
+            f.write("{bukan json")
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h12"})
+        assert c == 500, (c, r)
+        assert open(bus.agents).read() == "{bukan json"
 
         print("OK — 16 grup tes integrasi bus lolos")
         return 0

@@ -63,8 +63,14 @@ def enroll_agent(host: str, name: str) -> str:
         try:
             with open(AGENTS_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
+        except FileNotFoundError:
+            # fresh install saja yang boleh mulai dari registry kosong;
+            # file korup harus gagal keras, bukan ditimpa diam-diam
             data = {"tokens": {}}
+        except Exception as e:
+            raise RuntimeError(f"registry tak terbaca: {e}") from e
+        if not isinstance(data, dict) or not isinstance(data.get("tokens"), dict):
+            raise RuntimeError("format registry tak dikenal")
         toks = data.setdefault("tokens", {})
         if name in toks:
             raise ValueError("sudah ada")
@@ -360,6 +366,8 @@ table{{border-collapse:collapse;margin:1em 0}}td,th{{border:1px solid #30363d;pa
             except ValueError as e:
                 code = 409 if str(e) == "sudah ada" else 400
                 return self._send(code, {"error": str(e)})
+            except Exception as e:
+                return self._send(500, {"error": f"enroll gagal: {e}"})
             return self._send(200, {"ok": True, "agent": name,
                                     "token": tok, "host": host})
 
