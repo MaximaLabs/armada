@@ -14,6 +14,11 @@ armada enroll --host <nama> [--wait 120]
 #   (console provider/TAT, web shell, ssh). Tanpa SSH fan-in.
 ```
 
+Token tampil **sekali** di output enroll. Hilang sebelum dipasang? Nama agen
+akan 409 — hapus entri `wr-node-<nama>` di registry pada host bus
+(`BUS_TOKENS_FILE`, di produksi `/var/lib/warroom-bus/agents.json`) lalu
+`enroll` ulang (satu-satunya langkah yang masih butuh akses ke host bus).
+
 Baris yang dicetak adalah ini — atau jalankan manual dari checkout:
 
 ```bash
