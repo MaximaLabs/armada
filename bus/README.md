@@ -20,6 +20,7 @@ append-only di `BUS_DB` (default `/var/lib/warroom-bus/bus.db`).
 | POST | `/bus/job/post` | ✓ | `{host, mode, argv[], dedupe, after_id, ttl_sec, timeout_sec, env_profile, priority}` |
 | POST | `/bus/job/result` | ✓ | hanya agen pengklaim (409 selainnya); menulis audit `job/<id>` |
 | POST | `/bus/job/cancel` | ✓ | `queued`→`cancelled`; `claimed`→`cancel_req` (daemon kill) |
+| POST | `/bus/enroll` | master | `{host, agent?}` → mint `{agent, token}` di registry; token tampil sekali. `400` nama tak sah · `403` non-master · `409` duplikat · `500` registry rusak — file tak pernah ditimpa diam-diam. Menulis audit `audit` |
 
 Reaper internal tiap 60 dtk: lease basi → `queued` ulang; `queued` lewat
 `ttl_sec` → `expired`; anak `after_id` dari induk gagal → `cancelled`;
@@ -31,7 +32,8 @@ Reaper internal tiap 60 dtk: lease basi → `queued` ulang; `queued` lewat
 `BUS_TOKENS_FILE` (default `/home/admin/bus/agents.json`, format
 `{"tokens": {"<agent>": "<token>"}}` — dibaca ulang tiap request → rotasi
 tanpa restart). Token per-agen hanya boleh bertindak sebagai identitasnya;
-token master (`*`) boleh atas nama siapa pun. Lihat `agents.example.json`.
+token master (`*`) boleh atas nama siapa pun — dan **hanya master** yang boleh
+`POST /bus/enroll` (registry = root of trust). Lihat `agents.example.json`.
 
 ## Isi direktori
 
@@ -45,6 +47,8 @@ token master (`*`) boleh atas nama siapa pun. Lihat `agents.example.json`.
 ## Deploy
 
 `ops/warroom-bus.service` (systemd, `ProtectSystem=strict` + `ReadWritePaths`
-ke direktori DB). Env: `BUS_PORT`, `BUS_DB`, `BUS_TOKEN`, `BUS_TOKENS_FILE`.
+ke direktori DB). Env: `BUS_PORT`, `BUS_DB`, `BUS_TOKEN`, `BUS_TOKENS_FILE` —
+**wajib menunjuk path yang bisa ditulis service** (mis. `/var/lib/warroom-bus/agents.json`),
+bukan path read-only di `~/bus/` — `/bus/enroll` menulis registry ini.
 Ekspos publik lewat nginx `https://<host>/bus/*` → `127.0.0.1:8810` —
 klien jarak jauh cukup HTTPS :443.

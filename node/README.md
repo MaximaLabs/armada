@@ -5,6 +5,22 @@ Keluar-only ke `BUS_URL` — host tidak pernah membuka port.
 
 ## Install per host
 
+Token node dibuat di sisi bus lewat `armada enroll` (master saja) — bukan
+dengan menyunting `agents.json` manual. Dari laptop:
+
+```bash
+armada enroll --host <nama> [--wait 120]
+# → mencetak satu baris bootstrap; tempel di host lewat channel apa pun
+#   (console provider/TAT, web shell, ssh). Tanpa SSH fan-in.
+```
+
+Token tampil **sekali** di output enroll. Hilang sebelum dipasang? Nama agen
+akan 409 — hapus entri `wr-node-<nama>` di registry pada host bus
+(`BUS_TOKENS_FILE`, di produksi `/var/lib/warroom-bus/agents.json`) lalu
+`enroll` ulang (satu-satunya langkah yang masih butuh akses ke host bus).
+
+Baris yang dicetak adalah ini — atau jalankan manual dari checkout:
+
 ```bash
 bash ops/install.sh --bus https://bus.example.com --token <token> --host <nama>
 ```

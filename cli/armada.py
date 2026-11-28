@@ -2,7 +2,8 @@
 """armada — klien CLI seragam untuk semua agen.
 
 Stdlib Python, satu file. Konfigurasi ~/.config/armada/agent.env:
-    BUS_URL=https://<host>/bus   (atau http://127.0.0.1:8810 lokal)
+    BUS_URL=https://<host>       (origin saja — path /bus ditambah CLI;
+                                  http://127.0.0.1:8810 untuk lokal)
     BUS_TOKEN=<token agen>
     ARMADA_AGENT=<nama agen>     (opsional; dari token juga terbaca)
 
@@ -16,6 +17,8 @@ Perintah:
     armada cancel <id>
     armada note [-t topik] "teks"          posting catatan diskusi
     armada read [-t topik] [-n 20]         baca pesan topik
+    armada enroll --host H [--agent A] [--wait N]
+                                           daftarkan host baru (master saja)
 """
 from __future__ import annotations
 
@@ -134,6 +137,54 @@ def cmd_cancel(jid: str) -> None:
     print(r)
 
 
+def cmd_enroll(argv: list) -> None:
+    host, agent, wait = "", "", 0
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--host", "--agent", "--wait"):
+            if i + 1 >= len(argv):
+                die(f"{a} butuh nilai")
+            if a == "--host": host = argv[i + 1]
+            elif a == "--agent": agent = argv[i + 1]
+            else:
+                try: wait = int(argv[i + 1])
+                except ValueError: die("--wait harus angka (detik)")
+            i += 2
+        else: i += 1
+    if not host:
+        die("butuh --host <nama>")
+    if agent and agent != f"wr-node-{host}":
+        die(f"--agent '{agent}' tak cocok: wr-node selalu post sebagai "
+            f"'wr-node-{host}' — nama lain membuat node tak bisa heartbeat")
+    body = {"host": host}
+    if agent:
+        body["agent"] = agent
+    c, r = http("POST", "/bus/enroll", body)
+    if c != 200:
+        die(f"gagal enroll: {r}")
+    # agent.env membawa suffix /bus; node.env tidak — daemon menambahkannya
+    node_bus = BUS_URL[:-4] if BUS_URL.endswith("/bus") else BUS_URL
+    print(f"✓ terdaftar: {r['agent']}  (token tampil sekali di sini)")
+    print(f"Tempel di host '{host}' lewat channel apa pun "
+          f"(TAT console, web shell, ssh):\n")
+    print("  curl -fsSL https://raw.githubusercontent.com/MaximaLabs/"
+          "armada/main/ops/install.sh | \\")
+    print(f"      bash -s -- --bus {node_bus} "
+          f"--token {r['token']} --host {host}")
+    if not wait:
+        return
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        c, m = http("GET", f"/bus/messages?topic=health/{host}&limit=1")
+        if c == 200 and m.get("count"):
+            print("\n✓ heartbeat pertama diterima — node hidup")
+            return
+        time.sleep(5)
+    print(f"\n…belum ada heartbeat dalam {wait}s — node belum hidup, "
+          f"cek manual")
+
+
 def cmd_note(argv: list) -> None:
     topic = "warroom"
     if argv[:2] == ["-t"]:
@@ -173,6 +224,7 @@ def main() -> int:
     elif cmd == "cancel": cmd_cancel(rest[0])
     elif cmd == "note": cmd_note(rest)
     elif cmd == "read": cmd_read(rest)
+    elif cmd == "enroll": cmd_enroll(rest)
     else:
         die(f"perintah tak dikenal: {cmd}")
     return 0

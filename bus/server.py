@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -25,6 +27,9 @@ from urllib.parse import parse_qs, urlparse
 DB = os.environ.get("BUS_DB", "/var/lib/warroom-bus/bus.db")
 PORT = int(os.environ.get("BUS_PORT", "8810"))
 MAX_TEXT = 20000
+AGENTS_PATH = os.environ.get("BUS_TOKENS_FILE", "/home/admin/bus/agents.json")
+_AGENTS_LOCK = threading.Lock()
+_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def token() -> str:
@@ -36,14 +41,50 @@ def token() -> str:
 
 def agent_tokens() -> dict:
     """token -> nama agent. File JSON, dibaca ulang tiap request (rotasi tanpa restart)."""
-    path = os.environ.get("BUS_TOKENS_FILE", "/home/admin/bus/agents.json")
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(AGENTS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         toks = data.get("tokens") or {}
         return {str(v).strip(): str(k).strip() for k, v in toks.items() if str(v).strip()}
     except Exception:
         return {}
+
+
+def enroll_agent(host: str, name: str) -> str:
+    """Daftarkan agen baru di registry file — hanya dipanggil identitas master.
+
+    Registry hidup di BUS_TOKENS_FILE; ditulis atomik (tmp+replace) di bawah
+    lock karena server threading. Token tampil sekali di respons enroll;
+    tidak ada endpoint untuk membacanya kembali.
+    """
+    if not _NAME_RE.match(host or "") or not _NAME_RE.match(name or ""):
+        raise ValueError("nama host/agen tak sah")
+    with _AGENTS_LOCK:
+        try:
+            with open(AGENTS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            # fresh install saja yang boleh mulai dari registry kosong;
+            # file korup harus gagal keras, bukan ditimpa diam-diam
+            data = {"tokens": {}}
+        except Exception as e:
+            raise RuntimeError(f"registry tak terbaca: {e}") from e
+        if not isinstance(data, dict) or not isinstance(data.get("tokens"), dict):
+            raise RuntimeError("format registry tak dikenal")
+        toks = data.setdefault("tokens", {})
+        if name in toks:
+            raise ValueError("sudah ada")
+        tok = "bus-" + secrets.token_hex(32)
+        toks[name] = tok
+        parent = os.path.dirname(AGENTS_PATH)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        tmp = AGENTS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=1)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, AGENTS_PATH)
+    return tok
 
 
 def db() -> sqlite3.Connection:
@@ -306,11 +347,45 @@ table{{border-collapse:collapse;margin:1em 0}}td,th{{border:1px solid #30363d;pa
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         if path not in ("/bus/post", "/bus/job/post",
-                        "/bus/job/result", "/bus/job/cancel"):
+                        "/bus/job/result", "/bus/job/cancel",
+                        "/bus/enroll"):
             return self._send(404, {"error": "tidak ada"})
         if not self._auth():
             return
         b = self._body()
+
+        if path == "/bus/enroll":
+            # Registry agen adalah root of trust — token agen biasa tak boleh
+            # memint token baru (eskalasi hak). Hanya master (identity "*").
+            if self.identity != "*":
+                return self._send(403, {"error": "hanya master boleh enroll"})
+            host = b.get("host") or ""
+            name = b.get("agent") or f"wr-node-{host}"
+            if not isinstance(host, str) or not isinstance(name, str):
+                return self._send(400, {"error": "host/agent harus string"})
+            host, name = host.strip(), name.strip()
+            if len(name) > 64 and not b.get("agent"):
+                return self._send(400, {"error": "nama default kepanjangan "
+                                                 "— pakai --agent <nama≤64>"})
+            try:
+                tok = enroll_agent(host, name)
+            except ValueError as e:
+                code = 409 if str(e) == "sudah ada" else 400
+                return self._send(code, {"error": str(e)})
+            except Exception as e:
+                return self._send(500, {"error": f"enroll gagal: {e}"})
+            # baris audit: siapa mendaftarkan siapa — token tak pernah dicatat
+            con = db()
+            con.execute(
+                "INSERT INTO msg(ts,topic,agent,host,kind,text,refs) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (time.time(), "audit",
+                 "master" if self.identity == "*" else self.identity,
+                 host, "enroll",
+                 json.dumps({"agent": name, "by": self.identity}), "[]"))
+            con.commit()
+            return self._send(200, {"ok": True, "agent": name,
+                                    "token": tok, "host": host})
 
         if path == "/bus/job/post":
             argv = b.get("argv")

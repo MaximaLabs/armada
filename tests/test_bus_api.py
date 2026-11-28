@@ -148,7 +148,67 @@ def main() -> int:
         c, _ = req("GET", bus.port, "/bus/ui")
         assert c == 200, c
 
-        print("OK — 15 grup tes integrasi bus lolos")
+        # --- enroll: hanya master --------------------------------------
+        c, _ = req("POST", bus.port, "/bus/enroll")
+        assert c == 401, c
+        c, _ = req("POST", bus.port, "/bus/enroll", token="tok-agent",
+                   body={"host": "h9"})
+        assert c == 403, c
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h9"})
+        assert c == 200 and r["agent"] == "wr-node-h9" \
+            and r["token"].startswith("bus-") and len(r["token"]) == 68, (c, r)
+        # token baru langsung sah, sebagai identitasnya sendiri
+        c, r = req("POST", bus.port, "/bus/post", token=r["token"],
+                   body={"topic": "t1", "agent": "wr-node-h9", "text": "hi"})
+        assert c == 200, (c, r)
+        # nama eksplisit + duplikat + nama jelek
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h10", "agent": "custom-node"})
+        assert c == 200 and r["agent"] == "custom-node", (c, r)
+        c, _ = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h9"})
+        assert c == 409, c
+        c, _ = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h; rm -rf"})
+        assert c == 400, c
+        # registry tertulis ke BUS_TOKENS_FILE
+        data = json.load(open(bus.agents))
+        assert data["tokens"].get("wr-node-h9", "").startswith("bus-"), data
+        # file registry belum ada → dibuat (fresh install)
+        os.remove(bus.agents)
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h11"})
+        assert c == 200, (c, r)
+        assert os.path.exists(bus.agents)
+        # body non-string → 400, bukan koneksi putus
+        c, _ = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": 123})
+        assert c == 400, c
+        # host kepanjangan → pesan menyarankan --agent
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h" * 60})
+        assert c == 400 and "agent" in (r.get("error") or ""), (c, r)
+        # enroll sukses menulis baris audit (tanpa token di dalamnya)
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h20"})
+        assert c == 200, (c, r)
+        tok20 = r["token"]
+        c, r = req("GET", bus.port, "/bus/messages?topic=audit&limit=5",
+                   token="tok-master")
+        audit = [m for m in r["messages"] if m["kind"] == "enroll"]
+        assert audit and "h20" in audit[-1]["text"] \
+            and tok20 not in audit[-1]["text"], audit
+
+        # registry korup → 500 dan file TIDAK ditimpa (fleet tak dihanguskan)
+        with open(bus.agents, "w") as f:
+            f.write("{bukan json")
+        c, r = req("POST", bus.port, "/bus/enroll", token="tok-master",
+                   body={"host": "h12"})
+        assert c == 500, (c, r)
+        assert open(bus.agents).read() == "{bukan json"
+
+        print("OK — 16 grup tes integrasi bus lolos")
         return 0
     finally:
         bus.stop()
